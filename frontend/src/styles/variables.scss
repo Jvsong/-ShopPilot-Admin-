@@ -1,0 +1,87 @@
+// 电商后台管理系统 - 主题色变量
+// 设计规范：深蓝色主题，简约清爽的B端后台系统
+
+// 主色调
+$primary-color: #165DFF;        // 深蓝色 - 用于顶部导航栏、主按钮、高亮元素
+$primary-hover: #0E42D2;        // 主色悬停
+$primary-active: #072CA6;       // 主色激活
+
+// 辅助色
+$secondary-color: #4E5969;      // 深灰色 - 用于次要按钮
+$danger-color: #F53F3F;         // 红色 - 用于删除按钮、危险操作
+$success-color: #00B42A;        // 浅绿色 - 用于成功提示
+$warning-color: #FF7D00;        // 橙色 - 用于警告提示
+$info-color: #3491FA;           // 信息蓝 - 用于信息提示
+
+// 中性色
+$nav-bg: $primary-color;        // 顶部导航栏背景
+$subnav-bg: #E8F3FF;            // 浅蓝灰 - 用于二级导航栏
+$table-header-bg: #F0F7FF;      // 浅灰 - 用于表格表头
+$page-bg: #FFFFFF;              // 白色 - 页面背景
+$card-bg: #FFFFFF;              // 卡片背景
+
+// 文字颜色
+$text-primary: #1D2129;         // 主要文字
+$text-secondary: #86909C;       // 次要文字
+$text-disabled: #C9CDD4;        // 禁用文字
+$text-white: #FFFFFF;           // 白色文字
+
+// 边框颜色
+$border-color: #E5E6EB;         // 边框颜色
+$border-light: #F2F3F5;         // 浅边框
+
+// 圆角（优化：增大圆角，更圆润现代）
+$border-radius: 12px;           // 圆角12px
+$border-radius-sm: 6px;         // 小圆角
+
+// 阴影
+$box-shadow: 0 2px 12px rgba(0, 0, 0, 0.06); // 轻微阴影
+$box-shadow-hover: 0 8px 24px rgba(0, 0, 0, 0.1); // 悬停阴影
+$box-shadow-card: 0 4px 16px rgba(0, 0, 0, 0.08); // 卡片阴影
+
+// 间距（优化：增大间距，使界面更开阔）
+$spacing-xs: 6px;
+$spacing-sm: 12px;
+$spacing-md: 20px;
+$spacing-lg: 32px;
+$spacing-xl: 40px;
+$spacing-xxl: 56px;
+
+// 字体大小（优化：增大字体，提高可读性）
+$font-size-xs: 14px;
+$font-size-sm: 16px;
+$font-size-md: 18px;
+$font-size-lg: 20px;
+$font-size-xl: 22px;
+$font-size-xxl: 28px;
+
+// 行高
+$line-height: 1.5715;
+
+// 导出到CSS变量
+:root {
+  --primary-color: #{$primary-color};
+  --primary-hover: #{$primary-hover};
+  --primary-active: #{$primary-active};
+  --secondary-color: #{$secondary-color};
+  --danger-color: #{$danger-color};
+  --success-color: #{$success-color};
+  --warning-color: #{$warning-color};
+  --info-color: #{$info-color};
+  --nav-bg: #{$nav-bg};
+  --subnav-bg: #{$subnav-bg};
+  --table-header-bg: #{$table-header-bg};
+  --page-bg: #{$page-bg};
+  --card-bg: #{$card-bg};
+  --text-primary: #{$text-primary};
+  --text-secondary: #{$text-secondary};
+  --text-disabled: #{$text-disabled};
+  --text-white: #{$text-white};
+  --border-color: #{$border-color};
+  --border-light: #{$border-light};
+  --border-radius: #{$border-radius};
+  --border-radius-sm: #{$border-radius-sm};
+  --box-shadow: #{$box-shadow};
+  --box-shadow-hover: #{$box-shadow-hover};
+  --box-shadow-card: #{$box-shadow-card};
+}
