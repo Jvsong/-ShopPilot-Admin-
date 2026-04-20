@@ -17,6 +17,7 @@ import com.shop.dto.request.OrderQueryRequest;
 import com.shop.dto.request.OrderUpdateRequest;
 import com.shop.dto.response.OrderDetailResponse;
 import com.shop.dto.response.OrderStatisticsResponse;
+import com.shop.dto.response.RestockAnalysisResponse;
 import com.shop.exception.BusinessException;
 import com.shop.exception.ErrorCode;
 import com.shop.security.SecurityUtils;
@@ -31,15 +32,19 @@ import org.springframework.util.StringUtils;
 import java.math.BigDecimal;
 import java.time.LocalDate;
 import java.time.LocalDateTime;
+import java.time.temporal.ChronoUnit;
 import java.time.format.DateTimeFormatter;
 import java.util.ArrayList;
 import java.util.Arrays;
+import java.util.Comparator;
 import java.util.Collections;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.List;
 import java.util.Map;
 import java.util.Objects;
 import java.util.Random;
+import java.util.Set;
 import java.util.stream.Collectors;
 
 @Slf4j
@@ -313,6 +318,109 @@ public class OrderServiceImpl implements OrderService {
         response.setShippedCount((long) orders.stream().filter(order -> order.getStatus() == 3).count());
         response.setCompletedCount((long) orders.stream().filter(order -> order.getStatus() == 4).count());
         response.setCancelledCount((long) orders.stream().filter(order -> order.getStatus() == 5).count());
+        response.setStatusDistribution(orders.stream()
+                .filter(order -> order.getStatus() != null)
+                .collect(Collectors.groupingBy(Order::getStatus, Collectors.counting())));
+        response.setPaymentMethodDistribution(orders.stream()
+                .filter(order -> order.getPaymentMethod() != null)
+                .collect(Collectors.groupingBy(Order::getPaymentMethod, Collectors.counting())));
+        response.setDailyStatistics(buildDailyStatistics(orders, startDate, endDate));
+        response.setTopProducts(buildTopProducts(orders));
+        return response;
+    }
+
+    @Override
+    public RestockAnalysisResponse getRestockAnalysis(LocalDate startDate, LocalDate endDate) {
+        LocalDate resolvedEndDate = endDate != null ? endDate : LocalDate.now();
+        LocalDate resolvedStartDate = startDate != null ? startDate : resolvedEndDate.minusDays(6);
+        if (resolvedStartDate.isAfter(resolvedEndDate)) {
+            throw new BusinessException(ErrorCode.PARAM_ERROR, "开始日期不能晚于结束日期");
+        }
+
+        int analysisDays = (int) ChronoUnit.DAYS.between(resolvedStartDate, resolvedEndDate) + 1;
+        List<Product> visibleProducts = listVisibleProducts();
+        Map<Long, Product> productMap = visibleProducts.stream()
+                .collect(Collectors.toMap(Product::getId, product -> product));
+
+        List<Order> completedOrders = listScopedOrders(resolvedStartDate, resolvedEndDate).stream()
+                .filter(order -> Objects.equals(order.getStatus(), 4))
+                .collect(Collectors.toList());
+        List<OrderItem> completedOrderItems = listOrderItemsByOrders(completedOrders);
+
+        Set<Long> visibleProductIds = productMap.keySet();
+        Map<Long, Integer> salesByProduct = completedOrderItems.stream()
+                .filter(item -> visibleProductIds.contains(item.getProductId()))
+                .collect(Collectors.groupingBy(
+                        OrderItem::getProductId,
+                        Collectors.summingInt(item -> item.getQuantity() == null ? 0 : item.getQuantity())
+                ));
+
+        List<RestockAnalysisResponse.RestockSuggestion> suggestions = new ArrayList<>();
+        int highRiskCount = 0;
+        int mediumRiskCount = 0;
+        int lowRiskCount = 0;
+
+        for (Product product : visibleProducts) {
+            int stock = product.getStock() == null ? 0 : product.getStock();
+            int salesQuantity = salesByProduct.getOrDefault(product.getId(), 0);
+            if (salesQuantity <= 0 && stock > 10) {
+                continue;
+            }
+
+            BigDecimal averageDailySales = analysisDays <= 0
+                    ? BigDecimal.ZERO
+                    : BigDecimal.valueOf(salesQuantity)
+                    .divide(BigDecimal.valueOf(analysisDays), 2, BigDecimal.ROUND_HALF_UP);
+            BigDecimal estimatedDaysRemaining = averageDailySales.compareTo(BigDecimal.ZERO) > 0
+                    ? BigDecimal.valueOf(stock).divide(averageDailySales, 2, BigDecimal.ROUND_HALF_UP)
+                    : BigDecimal.valueOf(999);
+
+            String riskLevel;
+            if (salesQuantity > 0 && estimatedDaysRemaining.compareTo(BigDecimal.valueOf(7)) <= 0) {
+                riskLevel = "HIGH";
+                highRiskCount++;
+            } else if (salesQuantity > 0 && estimatedDaysRemaining.compareTo(BigDecimal.valueOf(15)) <= 0) {
+                riskLevel = "MEDIUM";
+                mediumRiskCount++;
+            } else {
+                riskLevel = "LOW";
+                lowRiskCount++;
+            }
+
+            int suggestedRestockQuantity = Math.max(0,
+                    BigDecimal.valueOf(15)
+                            .multiply(averageDailySales)
+                            .setScale(0, BigDecimal.ROUND_UP)
+                            .intValue() - stock);
+
+            RestockAnalysisResponse.RestockSuggestion suggestion = new RestockAnalysisResponse.RestockSuggestion();
+            suggestion.setProductId(product.getId());
+            suggestion.setProductName(product.getName());
+            suggestion.setCurrentStock(stock);
+            suggestion.setSalesQuantity(salesQuantity);
+            suggestion.setAverageDailySales(averageDailySales);
+            suggestion.setEstimatedDaysRemaining(estimatedDaysRemaining.compareTo(BigDecimal.valueOf(999)) >= 0
+                    ? null
+                    : estimatedDaysRemaining);
+            suggestion.setRiskLevel(riskLevel);
+            suggestion.setSuggestedRestockQuantity(suggestedRestockQuantity);
+            suggestion.setRecommendation(buildRestockRecommendation(riskLevel, product.getName(), salesQuantity, stock, suggestedRestockQuantity));
+            suggestions.add(suggestion);
+        }
+
+        suggestions.sort(Comparator
+                .comparingInt((RestockAnalysisResponse.RestockSuggestion item) -> riskPriority(item.getRiskLevel()))
+                .thenComparing(RestockAnalysisResponse.RestockSuggestion::getSalesQuantity, Comparator.reverseOrder())
+                .thenComparing(RestockAnalysisResponse.RestockSuggestion::getCurrentStock));
+
+        RestockAnalysisResponse response = new RestockAnalysisResponse();
+        response.setStartDate(resolvedStartDate);
+        response.setEndDate(resolvedEndDate);
+        response.setAnalysisDays(analysisDays);
+        response.setHighRiskCount(highRiskCount);
+        response.setMediumRiskCount(mediumRiskCount);
+        response.setLowRiskCount(lowRiskCount);
+        response.setSuggestions(suggestions);
         return response;
     }
 
@@ -482,6 +590,126 @@ public class OrderServiceImpl implements OrderService {
         stats.put("shipped", orders.stream().filter(order -> order.getStatus() == 3).count());
         stats.put("completed", orders.stream().filter(order -> order.getStatus() == 4).count());
         return stats;
+    }
+
+    private List<OrderStatisticsResponse.DailyStatistic> buildDailyStatistics(List<Order> orders, LocalDate startDate, LocalDate endDate) {
+        Map<LocalDate, List<Order>> dailyOrderMap = orders.stream()
+                .filter(order -> order.getCreateTime() != null)
+                .collect(Collectors.groupingBy(order -> order.getCreateTime().toLocalDate()));
+
+        List<LocalDate> days = new ArrayList<>();
+        if (startDate != null && endDate != null && !startDate.isAfter(endDate)) {
+            LocalDate cursor = startDate;
+            while (!cursor.isAfter(endDate)) {
+                days.add(cursor);
+                cursor = cursor.plusDays(1);
+            }
+        } else {
+            days.addAll(dailyOrderMap.keySet().stream().sorted().collect(Collectors.toList()));
+        }
+
+        List<OrderStatisticsResponse.DailyStatistic> result = new ArrayList<>();
+        for (LocalDate day : days) {
+            List<Order> dailyOrders = dailyOrderMap.getOrDefault(day, Collections.emptyList());
+            OrderStatisticsResponse.DailyStatistic statistic = new OrderStatisticsResponse.DailyStatistic();
+            statistic.setDate(day.toString());
+            statistic.setOrderCount((long) dailyOrders.size());
+            statistic.setSalesAmount(dailyOrders.stream()
+                    .map(Order::getActualAmount)
+                    .filter(Objects::nonNull)
+                    .reduce(BigDecimal.ZERO, BigDecimal::add));
+            result.add(statistic);
+        }
+        return result;
+    }
+
+    private List<OrderStatisticsResponse.ProductStatistic> buildTopProducts(List<Order> scopedOrders) {
+        Set<Long> completedOrderIds = scopedOrders.stream()
+                .filter(order -> Objects.equals(order.getStatus(), 4))
+                .map(Order::getId)
+                .collect(Collectors.toSet());
+        if (completedOrderIds.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        List<OrderItem> orderItems = orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>()
+                .in(OrderItem::getOrderId, completedOrderIds));
+        Map<Long, Product> visibleProducts = listVisibleProducts().stream()
+                .collect(Collectors.toMap(Product::getId, product -> product));
+        if (visibleProducts.isEmpty()) {
+            return Collections.emptyList();
+        }
+
+        Map<Long, List<OrderItem>> itemsByProduct = orderItems.stream()
+                .filter(item -> visibleProducts.containsKey(item.getProductId()))
+                .collect(Collectors.groupingBy(OrderItem::getProductId));
+
+        return itemsByProduct.entrySet().stream()
+                .map(entry -> {
+                    Product product = visibleProducts.get(entry.getKey());
+                    OrderStatisticsResponse.ProductStatistic statistic = new OrderStatisticsResponse.ProductStatistic();
+                    statistic.setProductId(entry.getKey());
+                    statistic.setProductName(product != null ? product.getName() : entry.getValue().get(0).getProductName());
+                    statistic.setSalesQuantity(entry.getValue().stream()
+                            .map(OrderItem::getQuantity)
+                            .filter(Objects::nonNull)
+                            .reduce(0, Integer::sum));
+                    statistic.setSalesAmount(entry.getValue().stream()
+                            .map(OrderItem::getTotalPrice)
+                            .filter(Objects::nonNull)
+                            .reduce(BigDecimal.ZERO, BigDecimal::add));
+                    return statistic;
+                })
+                .sorted(Comparator.comparing(OrderStatisticsResponse.ProductStatistic::getSalesQuantity, Comparator.reverseOrder())
+                        .thenComparing(OrderStatisticsResponse.ProductStatistic::getSalesAmount, Comparator.reverseOrder()))
+                .limit(10)
+                .collect(Collectors.toList());
+    }
+
+    private List<Product> listVisibleProducts() {
+        LambdaQueryWrapper<Product> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Product::getIsDeleted, 0);
+        if (SecurityUtils.isMerchant()) {
+            wrapper.eq(Product::getCreateBy, SecurityUtils.getCurrentUsername());
+        }
+        return productMapper.selectList(wrapper);
+    }
+
+    private List<Order> listScopedOrders(LocalDate startDate, LocalDate endDate) {
+        LambdaQueryWrapper<Order> wrapper = new LambdaQueryWrapper<>();
+        wrapper.eq(Order::getIsDeleted, 0)
+                .ge(startDate != null, Order::getCreateTime, startDate.atStartOfDay())
+                .le(endDate != null, Order::getCreateTime, endDate.atTime(23, 59, 59));
+        applyOrderScope(wrapper);
+        return orderMapper.selectList(wrapper);
+    }
+
+    private List<OrderItem> listOrderItemsByOrders(List<Order> orders) {
+        if (orders == null || orders.isEmpty()) {
+            return Collections.emptyList();
+        }
+        Set<Long> orderIds = orders.stream().map(Order::getId).collect(Collectors.toSet());
+        return orderItemMapper.selectList(new LambdaQueryWrapper<OrderItem>().in(OrderItem::getOrderId, orderIds));
+    }
+
+    private String buildRestockRecommendation(String riskLevel, String productName, int salesQuantity, int stock, int suggestedRestockQuantity) {
+        if ("HIGH".equals(riskLevel)) {
+            return String.format("%s 在统计周期内售出 %d 件，当前库存 %d，建议优先补货 %d 件。", productName, salesQuantity, stock, suggestedRestockQuantity);
+        }
+        if ("MEDIUM".equals(riskLevel)) {
+            return String.format("%s 库存可支撑时间有限，当前库存 %d，建议尽快安排补货。", productName, stock);
+        }
+        return String.format("%s 当前库存相对充足，可继续观察销售变化。", productName);
+    }
+
+    private int riskPriority(String riskLevel) {
+        if ("HIGH".equals(riskLevel)) {
+            return 0;
+        }
+        if ("MEDIUM".equals(riskLevel)) {
+            return 1;
+        }
+        return 2;
     }
 
     private void validateStatusTransition(Integer currentStatus, Integer newStatus) {

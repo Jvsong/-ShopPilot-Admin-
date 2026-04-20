@@ -9,6 +9,7 @@ import com.shop.dto.response.ApiResponse;
 import com.shop.dto.response.OrderDetailResponse;
 import com.shop.dto.response.OrderStatisticsResponse;
 import com.shop.dto.response.PageResponse;
+import com.shop.dto.response.RestockAnalysisResponse;
 import com.shop.service.OrderService;
 import io.swagger.v3.oas.annotations.Operation;
 import io.swagger.v3.oas.annotations.Parameter;
@@ -160,6 +161,15 @@ public class AdminOrderController {
     public ApiResponse<Object> getTodayOrderStatistics() {
         Map<String, Object> stats = orderService.getTodayOrderStatistics();
         return ApiResponse.success(stats);
+    }
+
+    @Operation(summary = "获取补货分析", description = "基于销量与库存生成补货分析结果")
+    @GetMapping("/restock-analysis")
+    public ApiResponse<RestockAnalysisResponse> getRestockAnalysis(
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate startDate,
+            @RequestParam(required = false) @DateTimeFormat(pattern = "yyyy-MM-dd") LocalDate endDate) {
+        RestockAnalysisResponse response = orderService.getRestockAnalysis(startDate, endDate);
+        return ApiResponse.success(response);
     }
 
     @Operation(summary = "导出订单数据", description = "导出订单数据，支持搜索筛选")

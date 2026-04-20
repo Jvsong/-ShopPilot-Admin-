@@ -59,6 +59,13 @@ springdoc:
     operations-sorter: method
     tags-sorter: alpha
 
+ai:
+  api-key: ${AI_API_KEY:sk-a1c78d1b3b544d5d961582cf52249cc7}
+  model: ${AI_MODEL:deepseek-chat}
+  base-url: ${AI_BASE_URL:https://api.deepseek.com}
+  temperature: 0.7
+  max-tokens: 2000
+
 management:
   endpoints:
     web:

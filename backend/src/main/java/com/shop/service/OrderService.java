@@ -7,6 +7,7 @@ import com.shop.dto.request.OrderQueryRequest;
 import com.shop.dto.request.OrderUpdateRequest;
 import com.shop.dto.response.OrderDetailResponse;
 import com.shop.dto.response.OrderStatisticsResponse;
+import com.shop.dto.response.RestockAnalysisResponse;
 
 import java.math.BigDecimal;
 import java.time.LocalDate;
@@ -97,6 +98,11 @@ public interface OrderService {
      * 获取订单统计信息
      */
     OrderStatisticsResponse getOrderStatistics(LocalDate startDate, LocalDate endDate);
+
+    /**
+     * 获取补货分析
+     */
+    RestockAnalysisResponse getRestockAnalysis(LocalDate startDate, LocalDate endDate);
 
     /**
      * 获取今日订单统计
