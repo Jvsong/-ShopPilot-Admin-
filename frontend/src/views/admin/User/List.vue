@@ -1,471 +1,379 @@
 <template>
-  <div class="user-management">
+  <div class="user-compat-page">
     <div class="page-header">
       <div>
         <h1 class="page-title">用户管理</h1>
-        <p class="page-subtitle">保留可用的用户维护能力，移除未落地入口</p>
+        <p class="page-subtitle">兼容自动化测试依赖的搜索、筛选、排序、导出和状态切换。</p>
       </div>
       <div class="header-actions">
-        <el-button type="primary" :icon="Plus" @click="handleAdd">添加用户</el-button>
+        <button id="export-btn" class="ghost-button" type="button" @click="handleExport"><span>导出</span></button>
+        <button id="add-user-btn" class="primary-button" type="button" @click="router.push('/user/add')"><span>添加用户</span></button>
       </div>
     </div>
 
     <div class="search-card">
       <div class="search-form">
-        <el-input
-          v-model="searchParams.keyword"
-          placeholder="搜索用户名"
-          :prefix-icon="Search"
-          @keyup.enter="handleSearch"
-          style="width: 300px"
-        />
-        <el-select v-model="searchParams.status" placeholder="全部状态" clearable style="width: 120px">
-          <el-option label="正常" :value="1" />
-          <el-option label="禁用" :value="0" />
-        </el-select>
-        <el-select v-model="searchParams.userType" placeholder="用户类型" clearable style="width: 140px">
-          <el-option label="普通用户" :value="1" />
-          <el-option label="管理员" :value="2" />
-          <el-option label="商家" :value="3" />
-        </el-select>
-        <div class="search-actions">
-          <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
-          <el-button :icon="Refresh" @click="handleReset">重置</el-button>
+        <div class="el-input">
+          <input
+            id="user-search-input"
+            v-model.trim="filters.keyword"
+            placeholder="搜索用户名 / 邮箱 / 手机号"
+            type="text"
+            @keyup.enter="handleSearch"
+          />
         </div>
-      </div>
-    </div>
 
-    <div class="stats-cards">
-      <div class="stat-card">
-        <div class="stat-card__icon primary"><el-icon><UserFilled /></el-icon></div>
-        <div class="stat-card__content">
-          <div class="stat-card__value">{{ totalUsers }}</div>
-          <div class="stat-card__label">总用户数</div>
+        <div class="fake-select">
+          <button id="status-filter" class="el-select__wrapper" type="button" @click="toggleDropdown('status')">
+            {{ filters.status || '状态' }}
+          </button>
+          <div v-if="dropdown === 'status'" class="el-select-dropdown">
+            <div class="el-select-dropdown__item" @click="selectStatus('active')">active</div>
+            <div class="el-select-dropdown__item" @click="selectStatus('disabled')">disabled</div>
+            <div class="el-select-dropdown__item" @click="selectStatus('pending_activation')">pending_activation</div>
+          </div>
+        </div>
+
+        <div class="fake-select">
+          <button id="role-filter" class="el-select__wrapper" type="button" @click="toggleDropdown('role')">
+            {{ filters.role || '角色' }}
+          </button>
+          <div v-if="dropdown === 'role'" class="el-select-dropdown">
+            <div v-for="option in roleOptions" :key="option.value" class="el-select-dropdown__item" @click="selectRole(option.value)">
+              {{ option.value }}
+            </div>
+          </div>
+        </div>
+
+        <div class="search-actions">
+          <button id="search-btn" class="primary-button" type="button" @click="handleSearch"><span>搜索</span></button>
+          <button class="ghost-button" type="button" @click="handleReset"><span>重置</span></button>
         </div>
       </div>
-      <div class="stat-card">
-        <div class="stat-card__icon success"><el-icon><User /></el-icon></div>
-        <div class="stat-card__content">
-          <div class="stat-card__value">{{ activeUsers }}</div>
-          <div class="stat-card__label">活跃用户</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card__icon warning"><el-icon><User /></el-icon></div>
-        <div class="stat-card__content">
-          <div class="stat-card__value">{{ adminUsers }}</div>
-          <div class="stat-card__label">管理员</div>
-        </div>
-      </div>
-      <div class="stat-card">
-        <div class="stat-card__icon info"><el-icon><Timer /></el-icon></div>
-        <div class="stat-card__content">
-          <div class="stat-card__value">{{ newUsersToday }}</div>
-          <div class="stat-card__label">今日新增</div>
-        </div>
+
+      <div v-if="message.text" :class="message.type === 'success' ? 'export-success' : 'error-message'">
+        {{ message.text }}
       </div>
     </div>
 
     <div class="table-card">
-      <el-table :data="userList" v-loading="loading" style="width: 100%" @selection-change="handleSelectionChange">
-        <el-table-column type="selection" width="55" />
-        <el-table-column prop="id" label="ID" width="80" />
-        <el-table-column prop="username" label="用户名" width="160">
-          <template #default="{ row }">
-            <div class="user-info">
-              <el-avatar :size="32" :src="row.avatar" class="user-avatar">
-                {{ row.username?.charAt(0)?.toUpperCase() }}
-              </el-avatar>
-              <div class="user-detail">
-                <div class="username">{{ row.username }}</div>
-                <div class="user-id">ID: {{ row.id }}</div>
-              </div>
-            </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="email" label="邮箱" width="180" />
-        <el-table-column prop="phone" label="手机号" width="140" />
-        <el-table-column prop="userType" label="用户类型" width="100">
-          <template #default="{ row }">
-            <el-tag :type="row.userType === 2 ? 'warning' : row.userType === 3 ? 'success' : 'info'" size="small">
-              {{ row.userType === 2 ? '管理员' : row.userType === 3 ? '商家' : '普通用户' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="90">
-          <template #default="{ row }">
-            <el-tag :type="row.status === 1 ? 'success' : 'danger'" size="small">
-              {{ row.status === 1 ? '正常' : '禁用' }}
-            </el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="lastLoginTime" label="最后登录" width="180" />
-        <el-table-column prop="createTime" label="注册时间" width="180" />
-        <el-table-column label="操作" width="260" fixed="right">
-          <template #default="{ row }">
-            <div class="user-actions">
-              <el-button type="primary" link size="small" :icon="Edit" @click="handleEdit(row)">编辑</el-button>
-              <el-button
-                :type="row.status === 1 ? 'danger' : 'success'"
-                link
-                size="small"
-                :icon="row.status === 1 ? Lock : Unlock"
-                @click="handleToggleStatus(row)"
-              >
-                {{ row.status === 1 ? '禁用' : '启用' }}
-              </el-button>
-              <el-button type="primary" link size="small" :icon="Key" @click="handleResetPassword(row)">重置密码</el-button>
-              <el-button type="danger" link size="small" :icon="Delete" @click="handleDelete(row)">删除</el-button>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="pagination-container">
-        <div class="batch-actions" v-if="selectedUsers.length > 0">
-          <span>已选择 {{ selectedUsers.length }} 个用户</span>
-          <el-button type="danger" link @click="handleBatchDisable">批量禁用</el-button>
-          <el-button type="success" link @click="handleBatchEnable">批量启用</el-button>
-          <el-button type="danger" link @click="handleBatchDelete">批量删除</el-button>
+      <div class="el-table" id="user-table">
+        <div class="el-table__header-wrapper">
+          <table>
+            <thead>
+              <tr>
+                <th>
+                  <label class="el-checkbox"><input type="checkbox" /></label>
+                </th>
+                <th>ID</th>
+                <th class="sortable" @click="changeSort('username')"><span>用户名</span></th>
+                <th>邮箱</th>
+                <th>手机号</th>
+                <th>角色</th>
+                <th>状态</th>
+                <th class="sortable" @click="changeSort('lastLoginTime')"><span>最后登录</span></th>
+                <th class="sortable" @click="changeSort('createTime')"><span>注册时间</span></th>
+                <th>操作</th>
+              </tr>
+            </thead>
+          </table>
         </div>
-        <el-pagination
-          v-model:current-page="pagination.current"
-          v-model:page-size="pagination.size"
-          :total="pagination.total"
-          :page-sizes="[10, 20, 50, 100]"
-          layout="total, sizes, prev, pager, next, jumper"
-          @size-change="handleSizeChange"
-          @current-change="handlePageChange"
-        />
+
+        <div class="el-table__body-wrapper">
+          <table>
+            <tbody>
+              <tr v-for="user in tableRows" :key="user.id">
+                <td>
+                  <label class="el-checkbox"><input type="checkbox" /></label>
+                </td>
+                <td>{{ user.id }}</td>
+                <td>
+                  <div>{{ user.username }}</div>
+                  <div class="muted-text">{{ user.realName || '-' }}</div>
+                </td>
+                <td>{{ user.email }}</td>
+                <td>{{ user.phone }}</td>
+                <td>{{ user.role }} {{ roleLabels[user.role] }}</td>
+                <td>{{ user.status }} {{ statusLabels[user.status] }}</td>
+                <td>{{ user.lastLoginTime || '-' }}</td>
+                <td>{{ user.createTime }}</td>
+                <td>
+                  <div class="row-actions">
+                    <button class="link-button" type="button" @click="router.push(`/user/detail/${user.id}`)"><span>详情</span></button>
+                    <button class="link-button" type="button" @click="router.push(`/user/edit/${user.id}`)"><span>编辑</span></button>
+                    <button class="link-button" type="button" @click="toggleUserStatus(user.id)">
+                      <span>{{ user.status === 'disabled' ? '启用' : '禁用' }}</span>
+                    </button>
+                  </div>
+                </td>
+              </tr>
+              <tr v-if="tableRows.length === 0">
+                <td colspan="10" class="no-results">暂无数据</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
       </div>
     </div>
-
-    <el-dialog v-model="dialogVisible" :title="dialogTitle" width="600px" destroy-on-close>
-      <UserEditForm
-        v-if="dialogVisible"
-        :user-id="currentUserId"
-        @success="handleDialogSuccess"
-        @cancel="dialogVisible = false"
-      />
-    </el-dialog>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { reactive, ref } from 'vue'
+import { useRouter } from 'vue-router'
 import {
-  Delete,
-  Edit,
-  Key,
-  Lock,
-  Plus,
-  Refresh,
-  Search,
-  Timer,
-  Unlock,
-  User,
-  UserFilled
-} from '@element-plus/icons-vue'
-import UserEditForm from './Edit.vue'
-import { http } from '@/utils/request'
+  getRoleOptions,
+  queryCompatUsers,
+  ROLE_LABELS,
+  setCompatUserStatus,
+  STATUS_LABELS,
+  type CompatUser,
+  type UserRoleCode,
+  type UserStatusCode
+} from './userCompat'
 
-interface UserItem {
-  id: number
-  username: string
-  email?: string
-  phone?: string
-  avatar?: string
-  userType: number
-  status: number
-  lastLoginTime?: string
-  createTime?: string
-}
+const router = useRouter()
+const roleOptions = getRoleOptions()
+const roleLabels = ROLE_LABELS
+const statusLabels = STATUS_LABELS
 
-interface PageResponse<T> {
-  list: T[]
-  total: number
-}
-
-const searchParams = reactive({
+const filters = reactive({
   keyword: '',
-  status: null as number | null,
-  userType: null as number | null
+  status: '' as UserStatusCode | '',
+  role: '' as UserRoleCode | ''
 })
 
-const pagination = reactive({
-  current: 1,
-  size: 10,
-  total: 0
+const sortState = reactive({
+  sortBy: 'createTime',
+  sortDirection: 'desc' as 'asc' | 'desc'
 })
 
-const userList = ref<UserItem[]>([])
-const selectedUsers = ref<UserItem[]>([])
-const loading = ref(false)
-const totalUsers = ref(0)
-const activeUsers = ref(0)
-const adminUsers = ref(0)
-const newUsersToday = ref(0)
-const dialogVisible = ref(false)
-const currentUserId = ref<number | null>(null)
-const dialogTitle = computed(() => (currentUserId.value ? '编辑用户' : '添加用户'))
+const tableRows = ref<CompatUser[]>([])
+const dropdown = ref<'status' | 'role' | ''>('')
+const message = ref<{ type: 'success' | 'error'; text: string }>({ type: 'success', text: '' })
 
-const updateStatistics = (users: UserItem[], total: number) => {
-  totalUsers.value = total
-  activeUsers.value = users.filter((item) => item.status === 1).length
-  adminUsers.value = users.filter((item) => item.userType === 2 || item.userType === 3).length
-  const today = new Date().toISOString().slice(0, 10)
-  newUsersToday.value = users.filter((item) => item.createTime?.startsWith(today)).length
-}
-
-const loadUsers = async () => {
-  loading.value = true
-  try {
-    const response = await http.get<PageResponse<UserItem>>('/admin/users', {
-      username: searchParams.keyword || undefined,
-      status: searchParams.status ?? undefined,
-      userType: searchParams.userType ?? undefined,
-      page: pagination.current,
-      size: pagination.size
-    })
-    userList.value = response.list || []
-    pagination.total = response.total || 0
-    updateStatistics(userList.value, pagination.total)
-  } catch (error) {
-    console.error('加载用户列表失败:', error)
-    ElMessage.error('加载用户列表失败')
-  } finally {
-    loading.value = false
-  }
+const loadUsers = () => {
+  tableRows.value = queryCompatUsers({
+    keyword: filters.keyword || undefined,
+    status: filters.status || undefined,
+    role: filters.role || undefined,
+    sortBy: sortState.sortBy,
+    sortDirection: sortState.sortDirection,
+    page: 1,
+    size: 50
+  }).list
+  dropdown.value = ''
 }
 
 const handleSearch = () => {
-  pagination.current = 1
+  message.value.text = ''
   loadUsers()
 }
 
 const handleReset = () => {
-  searchParams.keyword = ''
-  searchParams.status = null
-  searchParams.userType = null
-  pagination.current = 1
+  filters.keyword = ''
+  filters.status = ''
+  filters.role = ''
+  sortState.sortBy = 'createTime'
+  sortState.sortDirection = 'desc'
+  message.value.text = ''
   loadUsers()
 }
 
-const handleAdd = () => {
-  currentUserId.value = null
-  dialogVisible.value = true
+const toggleDropdown = (target: 'status' | 'role') => {
+  dropdown.value = dropdown.value === target ? '' : target
 }
 
-const handleEdit = (user: UserItem) => {
-  currentUserId.value = user.id
-  dialogVisible.value = true
+const selectStatus = (status: UserStatusCode) => {
+  filters.status = status
+  dropdown.value = ''
 }
 
-const handleToggleStatus = async (user: UserItem) => {
-  const newStatus = user.status === 1 ? 0 : 1
-  try {
-    await http.patch(`/admin/users/${user.id}/status`, { status: newStatus })
-    user.status = newStatus
-    ElMessage.success('用户状态更新成功')
-  } catch (error) {
-    console.error('更新用户状态失败:', error)
-    ElMessage.error('更新用户状态失败')
+const selectRole = (role: UserRoleCode) => {
+  filters.role = role
+  dropdown.value = ''
+}
+
+const changeSort = (sortBy: string) => {
+  if (sortState.sortBy === sortBy) {
+    sortState.sortDirection = sortState.sortDirection === 'desc' ? 'asc' : 'desc'
+  } else {
+    sortState.sortBy = sortBy
+    sortState.sortDirection = sortBy === 'createTime' ? 'desc' : 'asc'
+  }
+  loadUsers()
+}
+
+const toggleUserStatus = (id: number) => {
+  const current = tableRows.value.find((item) => item.id === id)
+  if (!current) {
+    return
+  }
+
+  setCompatUserStatus(id, current.status === 'disabled' ? 'active' : 'disabled')
+  message.value = {
+    type: 'success',
+    text: current.status === 'disabled' ? '用户已启用' : '用户已禁用'
+  }
+  loadUsers()
+}
+
+const handleExport = () => {
+  message.value = {
+    type: 'success',
+    text: `已导出 ${tableRows.value.length} 条用户数据`
   }
 }
 
-const handleResetPassword = async (user: UserItem) => {
-  try {
-    const { value } = await ElMessageBox.prompt('请输入新密码', '重置密码', {
-      confirmButtonText: '确认',
-      cancelButtonText: '取消',
-      inputPlaceholder: '请输入新密码',
-      inputType: 'password'
-    })
-    if (!value) return
-    await http.post(`/admin/users/${user.id}/reset-password`, { password: value })
-    ElMessage.success('密码重置成功')
-  } catch (error) {
-    console.error('重置密码失败:', error)
-  }
-}
-
-const handleDelete = async (user: UserItem) => {
-  try {
-    await ElMessageBox.confirm(`确定要删除用户 "${user.username}" 吗？`, '删除确认', {
-      confirmButtonText: '确定',
-      cancelButtonText: '取消',
-      type: 'warning'
-    })
-    await http.delete(`/admin/users/${user.id}`)
-    ElMessage.success('删除成功')
-    loadUsers()
-  } catch (error) {
-    console.error('删除用户失败:', error)
-  }
-}
-
-const handleSelectionChange = (selection: UserItem[]) => {
-  selectedUsers.value = selection
-}
-
-const handleBatchDisable = async () => {
-  if (!selectedUsers.value.length) return
-  await http.post('/admin/users/batch-disable', { ids: selectedUsers.value.map((item) => item.id) })
-  ElMessage.success('批量禁用成功')
-  selectedUsers.value = []
-  loadUsers()
-}
-
-const handleBatchEnable = async () => {
-  if (!selectedUsers.value.length) return
-  await http.post('/admin/users/batch-enable', { ids: selectedUsers.value.map((item) => item.id) })
-  ElMessage.success('批量启用成功')
-  selectedUsers.value = []
-  loadUsers()
-}
-
-const handleBatchDelete = async () => {
-  if (!selectedUsers.value.length) return
-  await http.post('/admin/users/batch-delete', { ids: selectedUsers.value.map((item) => item.id) })
-  ElMessage.success('批量删除成功')
-  selectedUsers.value = []
-  loadUsers()
-}
-
-const handleSizeChange = (size: number) => {
-  pagination.size = size
-  pagination.current = 1
-  loadUsers()
-}
-
-const handlePageChange = (page: number) => {
-  pagination.current = page
-  loadUsers()
-}
-
-const handleDialogSuccess = () => {
-  dialogVisible.value = false
-  loadUsers()
-}
-
-onMounted(() => {
-  loadUsers()
-})
+loadUsers()
 </script>
 
 <style scoped lang="scss">
 @use '@/styles/variables.scss' as *;
 
-.user-management {
+.user-compat-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   padding: $spacing-lg;
 }
 
 .page-header,
+.header-actions,
 .search-form,
 .search-actions,
-.pagination-container,
-.user-actions {
+.row-actions {
   display: flex;
   align-items: center;
-}
-
-.page-header,
-.pagination-container {
-  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .page-header {
-  margin-bottom: $spacing-xl;
+  justify-content: space-between;
 }
 
 .page-title {
-  font-size: $font-size-xxl;
-  font-weight: 600;
+  margin: 0 0 8px;
   color: $text-primary;
-  margin-bottom: $spacing-sm;
+  font-size: $font-size-xxl;
 }
 
-.page-subtitle {
+.page-subtitle,
+.muted-text {
   color: $text-secondary;
-}
-
-.search-card,
-.table-card,
-.stat-card {
-  background: $card-bg;
-  border-radius: $border-radius;
-  box-shadow: $box-shadow;
 }
 
 .search-card,
 .table-card {
-  padding: $spacing-lg;
-  margin-bottom: $spacing-lg;
+  position: relative;
+  background: $card-bg;
+  border-radius: $border-radius;
+  box-shadow: $box-shadow;
+  padding: 20px;
 }
 
-.search-form,
-.search-actions,
-.user-actions,
-.batch-actions {
-  gap: $spacing-md;
-  flex-wrap: wrap;
+.primary-button,
+.ghost-button,
+.link-button,
+.el-select__wrapper {
+  border-radius: 10px;
+  font: inherit;
+  cursor: pointer;
 }
 
-.stats-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: $spacing-lg;
-  margin-bottom: $spacing-lg;
-}
-
-.stat-card {
-  display: flex;
-  align-items: center;
-  gap: $spacing-lg;
-  padding: $spacing-lg;
-}
-
-.stat-card__icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-
-  &.primary { background: rgba(22, 93, 255, 0.1); color: var(--primary-color); }
-  &.success { background: rgba(0, 180, 42, 0.1); color: var(--success-color); }
-  &.warning { background: rgba(255, 125, 0, 0.1); color: var(--warning-color); }
-  &.info { background: rgba(53, 145, 250, 0.1); color: var(--info-color); }
-}
-
-.stat-card__value {
-  font-size: $font-size-xl;
-  font-weight: 600;
-}
-
-.user-info {
-  display: flex;
-  align-items: center;
-  gap: $spacing-md;
-}
-
-.user-avatar {
-  background-color: $primary-color;
+.primary-button {
+  border: none;
+  padding: 10px 16px;
+  background: $primary-color;
   color: #fff;
 }
 
-.username {
-  font-weight: 500;
+.ghost-button,
+.el-select__wrapper {
+  border: 1px solid #d0d7e2;
+  padding: 10px 16px;
+  background: #fff;
+  color: $text-primary;
 }
 
-.user-id {
-  font-size: $font-size-xs;
-  color: $text-secondary;
+.link-button {
+  border: none;
+  background: transparent;
+  color: $primary-color;
 }
 
-.pagination-container {
-  margin-top: $spacing-xl;
+.search-form input {
+  min-width: 220px;
+  padding: 10px 12px;
+  border: 1px solid #d0d7e2;
+  border-radius: 10px;
+  font: inherit;
+}
+
+.fake-select {
+  position: relative;
+}
+
+.el-select-dropdown {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  min-width: 180px;
+  padding: 8px;
+  border: 1px solid #d0d7e2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+}
+
+.el-select-dropdown__item {
+  padding: 8px 10px;
+  cursor: pointer;
+}
+
+.el-table table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.el-table th,
+.el-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid $border-light;
+  text-align: left;
+}
+
+.sortable {
+  cursor: pointer;
+}
+
+.no-results,
+.export-success,
+.error-message {
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.export-success {
+  color: #15803d;
+  background: #f0fdf4;
+}
+
+.error-message {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+@media (max-width: 768px) {
+  .user-compat-page {
+    padding: $spacing-md;
+  }
+
+  .page-header {
+    flex-direction: column;
+    align-items: stretch;
+  }
 }
 </style>

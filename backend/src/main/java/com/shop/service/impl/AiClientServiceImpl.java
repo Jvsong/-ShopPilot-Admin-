@@ -4,21 +4,25 @@ import com.fasterxml.jackson.core.JsonProcessingException;
 import com.fasterxml.jackson.databind.ObjectMapper;
 import com.shop.config.AiProperties;
 import com.shop.service.AiClientService;
-import com.theokanning.openai.completion.chat.ChatCompletionRequest;
-import com.theokanning.openai.completion.chat.ChatMessage;
-import com.theokanning.openai.completion.chat.ChatMessageRole;
-import com.theokanning.openai.service.OpenAiService;
 import lombok.RequiredArgsConstructor;
 import lombok.extern.slf4j.Slf4j;
+import org.springframework.http.HttpEntity;
+import org.springframework.http.HttpHeaders;
+import org.springframework.http.HttpMethod;
+import org.springframework.http.MediaType;
+import org.springframework.http.ResponseEntity;
 import org.springframework.stereotype.Service;
 import org.springframework.util.StringUtils;
+import org.springframework.web.client.RestClientException;
+import org.springframework.web.client.RestTemplate;
 
 import java.util.ArrayList;
+import java.util.LinkedHashMap;
 import java.util.List;
 import java.util.Map;
 
 /**
- * AI 客户端服务实现
+ * AI client service implementation.
  */
 @Slf4j
 @Service
@@ -26,8 +30,10 @@ import java.util.Map;
 public class AiClientServiceImpl implements AiClientService {
 
     private static final ObjectMapper OBJECT_MAPPER = new ObjectMapper();
+    private static final String SYSTEM_PROMPT =
+            "You are a professional ecommerce operations assistant. Please answer in Chinese.";
 
-    private final OpenAiService openAiService;
+    private final RestTemplate aiRestTemplate;
     private final AiProperties aiProperties;
 
     @Override
@@ -36,8 +42,7 @@ public class AiClientServiceImpl implements AiClientService {
             return null;
         }
 
-        String prompt = buildSuggestionPrompt(context, question);
-        return callAi(prompt);
+        return callAi(buildSuggestionPrompt(context, question));
     }
 
     @Override
@@ -46,40 +51,103 @@ public class AiClientServiceImpl implements AiClientService {
             return null;
         }
 
-        String prompt = buildSummaryPrompt(context, question);
-        return callAi(prompt);
+        return callAi(buildSummaryPrompt(context, question));
     }
 
     @Override
     public boolean isAvailable() {
-        return openAiService != null && aiProperties.getEnabled();
+        return Boolean.TRUE.equals(aiProperties.getEnabled()) && StringUtils.hasText(aiProperties.getApiKey());
     }
 
     private String callAi(String prompt) {
         try {
-            List<ChatMessage> messages = new ArrayList<>();
-            messages.add(new ChatMessage(ChatMessageRole.SYSTEM.value(), "你是一个专业的电商运营助手，请用中文回答。"));
-            messages.add(new ChatMessage(ChatMessageRole.USER.value(), prompt));
+            HttpHeaders headers = new HttpHeaders();
+            headers.setContentType(MediaType.APPLICATION_JSON);
+            headers.setBearerAuth(aiProperties.getApiKey().trim());
 
-            ChatCompletionRequest request = ChatCompletionRequest.builder()
-                    .model(aiProperties.getModel())
-                    .messages(messages)
-                    .temperature(aiProperties.getTemperature())
-                    .maxTokens(aiProperties.getMaxTokens())
-                    .build();
+            Map<String, Object> payload = new LinkedHashMap<>();
+            payload.put("model", aiProperties.getModel());
+            payload.put("messages", buildMessages(prompt));
+            payload.put("temperature", aiProperties.getTemperature());
+            payload.put("max_tokens", aiProperties.getMaxTokens());
 
-            StringBuilder response = new StringBuilder();
-            openAiService.createChatCompletion(request)
-                    .getChoices()
-                    .forEach(choice -> response.append(choice.getMessage().getContent()));
+            HttpEntity<Map<String, Object>> entity = new HttpEntity<>(payload, headers);
+            ResponseEntity<Map> response = aiRestTemplate.exchange(
+                    resolveChatCompletionsUrl(),
+                    HttpMethod.POST,
+                    entity,
+                    Map.class
+            );
 
-            String result = response.toString().trim();
-            log.debug("AI 响应: {}", result);
-            return result;
-        } catch (Exception e) {
-            log.error("调用 AI API 失败: {}", e.getMessage(), e);
+            String result = extractContent(response.getBody());
+            if (!StringUtils.hasText(result)) {
+                log.warn("AI response body did not contain content: {}", response.getBody());
+                return null;
+            }
+
+            log.debug("AI response: {}", result);
+            return result.trim();
+        } catch (RestClientException e) {
+            log.error("AI API request failed: {}", e.getMessage(), e);
             return null;
         }
+    }
+
+    private List<Map<String, String>> buildMessages(String prompt) {
+        List<Map<String, String>> messages = new ArrayList<>();
+
+        Map<String, String> systemMessage = new LinkedHashMap<>();
+        systemMessage.put("role", "system");
+        systemMessage.put("content", SYSTEM_PROMPT);
+        messages.add(systemMessage);
+
+        Map<String, String> userMessage = new LinkedHashMap<>();
+        userMessage.put("role", "user");
+        userMessage.put("content", prompt);
+        messages.add(userMessage);
+
+        return messages;
+    }
+
+    @SuppressWarnings("unchecked")
+    private String extractContent(Map<String, Object> responseBody) {
+        if (responseBody == null) {
+            return null;
+        }
+
+        Object choicesObj = responseBody.get("choices");
+        if (!(choicesObj instanceof List) || ((List<?>) choicesObj).isEmpty()) {
+            return null;
+        }
+
+        Object firstChoice = ((List<?>) choicesObj).get(0);
+        if (!(firstChoice instanceof Map)) {
+            return null;
+        }
+
+        Object messageObj = ((Map<String, Object>) firstChoice).get("message");
+        if (!(messageObj instanceof Map)) {
+            return null;
+        }
+
+        Object content = ((Map<String, Object>) messageObj).get("content");
+        return content == null ? null : String.valueOf(content);
+    }
+
+    private String resolveChatCompletionsUrl() {
+        String baseUrl = aiProperties.getBaseUrl();
+        if (!StringUtils.hasText(baseUrl)) {
+            baseUrl = "https://api.deepseek.com";
+        }
+
+        String normalized = baseUrl.trim().replaceAll("/+$", "");
+        if (normalized.endsWith("/chat/completions")) {
+            return normalized;
+        }
+        if (normalized.endsWith("/v1")) {
+            return normalized + "/chat/completions";
+        }
+        return normalized + "/chat/completions";
     }
 
     private String buildSuggestionPrompt(String context, String question) {
@@ -88,23 +156,30 @@ public class AiClientServiceImpl implements AiClientService {
             String contextJson = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(contextMap);
 
             return String.format(
-                "请根据以下电商运营数据，生成专业、实用的运营建议。\n" +
-                "问题类型: %s\n\n" +
-                "数据:\n%s\n\n" +
-                "要求:\n" +
-                "1. 建议内容要具体、可操作\n" +
-                "2. 优先关注高风险问题\n" +
-                "3. 使用电商运营专业术语\n" +
-                "4. 每条建议包含具体的行动指引\n" +
-                "5. 输出格式为纯文本，无需 markdown\n\n" +
-                "请生成 2-3 条核心建议:", question, contextJson);
+                    "Based on the following ecommerce data, generate practical operations suggestions.%n" +
+                            "Question type: %s%n%n" +
+                            "Data:%n%s%n%n" +
+                            "Requirements:%n" +
+                            "1. Keep suggestions concrete and actionable.%n" +
+                            "2. Prioritize high-risk issues.%n" +
+                            "3. Use ecommerce operations terminology.%n" +
+                            "4. Each suggestion should include a clear next action.%n" +
+                            "5. Output plain text only, no markdown.%n" +
+                            "6. Answer in Chinese.%n%n" +
+                            "Generate 2 to 3 core suggestions.",
+                    question,
+                    contextJson
+            );
         } catch (JsonProcessingException e) {
-            log.error("解析上下文 JSON 失败: {}", context, e);
+            log.error("Failed to parse AI context JSON: {}", context, e);
             return String.format(
-                "请根据电商运营数据生成专业建议。\n" +
-                "问题类型: %s\n" +
-                "原始数据: %s\n\n" +
-                "请生成 2-3 条核心运营建议:", question, context);
+                    "Generate professional ecommerce operation suggestions.%n" +
+                            "Question type: %s%n" +
+                            "Raw data: %s%n%n" +
+                            "Generate 2 to 3 core suggestions in Chinese.",
+                    question,
+                    context
+            );
         }
     }
 
@@ -114,23 +189,30 @@ public class AiClientServiceImpl implements AiClientService {
             String contextJson = OBJECT_MAPPER.writerWithDefaultPrettyPrinter().writeValueAsString(contextMap);
 
             return String.format(
-                "请根据以下电商运营数据，生成一段简洁、专业的运营摘要。\n" +
-                "问题类型: %s\n\n" +
-                "数据:\n%s\n\n" +
-                "要求:\n" +
-                "1. 突出关键数据指标\n" +
-                "2. 指出主要趋势和风险\n" +
-                "3. 语言精炼，控制在 150 字以内\n" +
-                "4. 使用电商运营专业术语\n" +
-                "5. 输出格式为纯文本，无需 markdown\n\n" +
-                "运营摘要:", question, contextJson);
+                    "Based on the following ecommerce data, generate a concise operations summary.%n" +
+                            "Question type: %s%n%n" +
+                            "Data:%n%s%n%n" +
+                            "Requirements:%n" +
+                            "1. Highlight the most important metrics.%n" +
+                            "2. Mention the main trend and risk.%n" +
+                            "3. Keep the summary within 150 Chinese characters if possible.%n" +
+                            "4. Use ecommerce operations terminology.%n" +
+                            "5. Output plain text only, no markdown.%n" +
+                            "6. Answer in Chinese.%n%n" +
+                            "Operations summary:",
+                    question,
+                    contextJson
+            );
         } catch (JsonProcessingException e) {
-            log.error("解析上下文 JSON 失败: {}", context, e);
+            log.error("Failed to parse AI context JSON: {}", context, e);
             return String.format(
-                "请根据电商运营数据生成运营摘要。\n" +
-                "问题类型: %s\n" +
-                "原始数据: %s\n\n" +
-                "请生成简洁的运营摘要:", question, context);
+                    "Generate an ecommerce operations summary.%n" +
+                            "Question type: %s%n" +
+                            "Raw data: %s%n%n" +
+                            "Generate a concise Chinese summary.",
+                    question,
+                    context
+            );
         }
     }
 }

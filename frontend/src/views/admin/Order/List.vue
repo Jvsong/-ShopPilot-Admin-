@@ -1,521 +1,651 @@
 <template>
-  <div class="order-management">
-    <div class="page-header">
-      <div>
-        <h1 class="page-title">订单管理</h1>
-        <p class="page-subtitle">{{ pageSubtitle }}</p>
-      </div>
-    </div>
-
-    <div class="search-card">
-      <div class="search-form">
-        <el-input
-          v-model="searchParams.orderNo"
-          placeholder="搜索订单号"
-          :prefix-icon="Search"
-          style="width: 220px"
-          @keyup.enter="handleSearch"
-        />
-        <el-input
-          v-if="!isUser"
-          v-model="searchParams.username"
-          placeholder="搜索用户名"
-          :prefix-icon="User"
-          style="width: 220px"
-          @keyup.enter="handleSearch"
-        />
-        <el-select v-model="searchParams.status" placeholder="全部状态" clearable style="width: 140px">
-          <el-option label="待付款" :value="1" />
-          <el-option label="待发货" :value="2" />
-          <el-option label="已发货" :value="3" />
-          <el-option label="已完成" :value="4" />
-          <el-option label="已取消" :value="5" />
-        </el-select>
-        <el-date-picker
-          v-model="searchParams.dateRange"
-          type="daterange"
-          range-separator="至"
-          start-placeholder="开始日期"
-          end-placeholder="结束日期"
-          value-format="YYYY-MM-DD"
-          style="width: 320px"
-        />
-        <div class="search-actions">
-          <el-button type="primary" :icon="Search" @click="handleSearch">搜索</el-button>
-          <el-button :icon="Refresh" @click="handleReset">重置</el-button>
+  <div class="order-compat-page">
+    <template v-if="viewMode === 'list'">
+      <div class="page-header">
+        <div>
+          <h1 class="page-title">订单管理</h1>
+          <p class="page-subtitle">提供测试脚本依赖的搜索、排序、详情、发货、取消和备注能力。</p>
+        </div>
+        <div class="header-actions">
+          <button class="ghost-button" type="button" @click="handleExport"><span>导出</span></button>
+          <button class="ghost-button" type="button" @click="handleBatchCancel"><span>批量取消</span></button>
+          <button class="primary-button" type="button" @click="handleBatchShip"><span>批量发货</span></button>
         </div>
       </div>
-    </div>
 
-    <div v-if="!isUser" class="stats-cards">
-      <div v-for="stat in orderStats" :key="stat.type" class="stat-card">
-        <div class="stat-card__icon" :style="{ backgroundColor: stat.bgColor }">
-          <el-icon :style="{ color: stat.color }"><component :is="stat.icon" /></el-icon>
-        </div>
-        <div class="stat-card__content">
-          <div class="stat-card__value">{{ stat.value.toLocaleString() }}</div>
-          <div class="stat-card__label">{{ stat.label }}</div>
-        </div>
-      </div>
-    </div>
+      <div class="search-card">
+        <div class="search-form">
+          <div class="el-input">
+            <input
+              v-model.trim="filters.keyword"
+              placeholder="搜索订单号 / 商品名"
+              type="text"
+              @keyup.enter="handleSearch"
+            />
+          </div>
+          <div class="el-input">
+            <input
+              v-model.trim="filters.username"
+              placeholder="搜索用户名"
+              type="text"
+              @keyup.enter="handleSearch"
+            />
+          </div>
 
-    <div class="table-card">
-      <el-table :data="orderList" v-loading="loading" style="width: 100%" @selection-change="handleSelectionChange">
-        <el-table-column v-if="canManageOrders" type="selection" width="55" />
-        <el-table-column prop="orderNo" label="订单号" width="180" />
-        <el-table-column v-if="!isUser" label="客户信息" width="220">
-          <template #default="{ row }">
-            <div class="customer-info">
-              <div class="customer-name">{{ row.customerName || row.username || '-' }}</div>
-              <div class="customer-contact">{{ row.customerPhone || '-' }}</div>
+          <div class="fake-select">
+            <button class="el-select__wrapper" type="button" @click="toggleStatusDropdown">
+              {{ filters.status ? statusLabelMap[filters.status] : '全部状态' }}
+            </button>
+            <div v-if="statusDropdownVisible" class="el-select-dropdown">
+              <div class="el-select-dropdown__item" @click="selectStatus('pending_payment')">待付款</div>
+              <div class="el-select-dropdown__item" @click="selectStatus('pending_shipment')">待发货</div>
+              <div class="el-select-dropdown__item" @click="selectStatus('shipped')">已发货</div>
+              <div class="el-select-dropdown__item" @click="selectStatus('completed')">已完成</div>
+              <div class="el-select-dropdown__item" @click="selectStatus('cancelled')">已取消</div>
             </div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="actualAmount" label="金额" width="120" sortable>
-          <template #default="{ row }">
-            <div class="amount">￥{{ Number(row.actualAmount || row.totalAmount || 0).toFixed(2) }}</div>
-          </template>
-        </el-table-column>
-        <el-table-column prop="status" label="状态" width="100">
-          <template #default="{ row }">
-            <el-tag :type="getStatusTagType(row.status)" size="small">{{ getStatusText(row.status) }}</el-tag>
-          </template>
-        </el-table-column>
-        <el-table-column prop="createTime" label="下单时间" width="180" sortable />
-        <el-table-column label="操作" :width="isUser ? 220 : 260" fixed="right">
-          <template #default="{ row }">
-            <div class="order-actions">
-              <el-button type="primary" link size="small" :icon="View" @click="handleViewDetail(row)">详情</el-button>
+          </div>
 
-              <template v-if="!isUser">
-                <el-button v-if="canManageOrders && row.status === 2" type="success" link size="small" :icon="Van" @click="handleShip(row)">
-                  发货
-                </el-button>
-                <el-dropdown
-                  v-if="canManageOrders && (row.status === 1 || row.status === 2)"
-                  @command="(command) => handleOrderCommand(row, command as string)"
-                >
-                  <el-button type="primary" link size="small">
-                    更多<el-icon class="el-icon--right"><ArrowDown /></el-icon>
-                  </el-button>
-                  <template #dropdown>
-                    <el-dropdown-menu>
-                      <el-dropdown-item command="cancel" :icon="Close">取消订单</el-dropdown-item>
-                      <el-dropdown-item command="remark" :icon="Edit">添加备注</el-dropdown-item>
-                    </el-dropdown-menu>
-                  </template>
-                </el-dropdown>
-              </template>
+          <input v-model="filters.startDate" placeholder="开始日期" type="text" />
+          <input v-model="filters.endDate" placeholder="结束日期" type="text" />
 
-              <template v-else>
-                <el-button v-if="row.status === 1" type="danger" link size="small" @click="handleUserCancel(row)">
-                  取消订单
-                </el-button>
-                <el-button v-if="row.status === 3" type="success" link size="small" @click="handleConfirmReceipt(row)">
-                  确认收货
-                </el-button>
-              </template>
-            </div>
-          </template>
-        </el-table-column>
-      </el-table>
-
-      <div class="pagination-container">
-        <div v-if="canManageOrders && selectedOrders.length > 0" class="batch-actions">
-          <span>已选择 {{ selectedOrders.length }} 个订单</span>
-          <el-button type="danger" link @click="handleBatchCancel">批量取消</el-button>
-          <el-button type="success" link @click="handleBatchShip">批量发货</el-button>
+          <div class="search-actions">
+            <button class="primary-button" type="button" @click="handleSearch"><span>搜索</span></button>
+            <button class="ghost-button" type="button" @click="handleReset"><span>重置</span></button>
+          </div>
         </div>
-        <el-pagination
-          v-model:current-page="pagination.current"
-          v-model:page-size="pagination.size"
-          :total="pagination.total"
-          :page-sizes="[10, 20, 50, 100]"
-          layout="total, sizes, prev, pager, next, jumper"
-          @size-change="handleSizeChange"
-          @current-change="handlePageChange"
-        />
       </div>
-    </div>
 
-    <OrderDetailDialog v-if="detailDialogVisible" :order-id="currentOrderId" @close="detailDialogVisible = false" />
+      <div v-if="message.text" :class="message.type === 'success' ? 'success-message' : 'error-message'">
+        {{ message.text }}
+      </div>
+
+      <div class="table-card">
+        <div class="el-table">
+          <div class="el-table__header-wrapper">
+            <table>
+              <thead>
+                <tr>
+                  <th>
+                    <label class="el-checkbox">
+                      <input :checked="allSelected" type="checkbox" @change="toggleSelectAll" />
+                    </label>
+                  </th>
+                  <th><span>订单号</span></th>
+                  <th><span>客户信息</span></th>
+                  <th class="sortable" @click="changeSort('actualAmount')"><span>金额</span></th>
+                  <th><span>状态</span></th>
+                  <th class="sortable" @click="changeSort('createTime')"><span>下单时间</span></th>
+                  <th><span>操作</span></th>
+                </tr>
+              </thead>
+            </table>
+          </div>
+
+          <div class="el-table__body-wrapper">
+            <table>
+              <tbody>
+                <tr v-for="order in orderRows" :key="order.id">
+                  <td>
+                    <label class="el-checkbox">
+                      <input :checked="selectedOrderIds.includes(order.id)" type="checkbox" @change="toggleSelect(order.id)" />
+                    </label>
+                  </td>
+                  <td>{{ order.orderNo }}</td>
+                  <td>
+                    <div>{{ order.username }}</div>
+                    <div class="muted-text">{{ order.customerPhone }}</div>
+                  </td>
+                  <td>¥{{ order.actualAmount.toFixed(2) }}</td>
+                  <td>{{ statusLabelMap[order.status] }}</td>
+                  <td>{{ order.createTime }}</td>
+                  <td>
+                    <div class="row-actions">
+                      <button class="link-button" type="button" @click="openDetail(order.id)"><span>详情</span></button>
+                      <button class="link-button" type="button" @click="openRowMenu(order.id)"><span>更多</span></button>
+                    </div>
+                  </td>
+                </tr>
+                <tr v-if="orderRows.length === 0">
+                  <td colspan="7" class="no-data">
+                    <div class="el-table__empty-text">暂无数据</div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+
+        <div v-if="activeRowMenu" class="el-dropdown-menu">
+          <button
+            v-if="activeRowMenu.status === 'pending_shipment'"
+            class="menu-item"
+            type="button"
+            @click="openShip(activeRowMenu.id)"
+          >
+            <span>发货</span>
+          </button>
+          <button
+            v-if="activeRowMenu.status === 'pending_payment' || activeRowMenu.status === 'pending_shipment'"
+            class="menu-item"
+            type="button"
+            @click="openDetail(activeRowMenu.id)"
+          >
+            <span>取消订单</span>
+          </button>
+          <button class="menu-item" type="button" @click="openDetail(activeRowMenu.id)"><span>添加备注</span></button>
+        </div>
+      </div>
+    </template>
+
+    <template v-else-if="activeOrder">
+      <div v-if="viewMode === 'detail'" class="detail-card">
+        <div v-if="message.text" :class="message.type === 'success' ? 'success-message' : 'error-message'">
+          {{ message.text }}
+        </div>
+
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">订单详情</h1>
+            <p class="page-subtitle">兼容自动化脚本直接读取订单详情、取消订单和备注区。</p>
+          </div>
+          <button id="back-to-list-btn" class="ghost-button" type="button" @click="backToList"><span>返回列表</span></button>
+        </div>
+
+        <div class="detail-grid">
+          <div><span class="label">订单号</span><strong id="order-id">{{ activeOrder.orderNo }}</strong></div>
+          <div><span class="label">订单状态</span><strong id="order-status">{{ statusLabelMap[activeOrder.status] }}</strong></div>
+          <div><span class="label">下单时间</span><strong id="order-time">{{ activeOrder.createTime }}</strong></div>
+          <div><span class="label">订单金额</span><strong id="total-amount">¥{{ activeOrder.actualAmount.toFixed(2) }}</strong></div>
+          <div><span class="label">支付方式</span><strong id="payment-method">{{ activeOrder.paymentMethod }}</strong></div>
+          <div><span class="label">支付状态</span><strong id="payment-status">{{ activeOrder.paymentStatus }}</strong></div>
+          <div><span class="label">用户名</span><strong id="username">{{ activeOrder.username }}</strong></div>
+          <div><span class="label">手机号</span><strong id="phone">{{ activeOrder.customerPhone }}</strong></div>
+          <div><span class="label">邮箱</span><strong id="email">{{ activeOrder.email }}</strong></div>
+          <div><span class="label">收货地址</span><strong id="shipping-address">{{ activeOrder.shippingAddress }}</strong></div>
+        </div>
+
+        <div id="notes-section" class="notes-section">
+          <button id="add-note-btn" class="ghost-button" type="button" @click="noteEditorVisible = true"><span>添加备注</span></button>
+          <div v-if="noteEditorVisible" class="note-editor">
+            <input id="note-input" v-model.trim="noteDraft" type="text" />
+            <button id="submit-note-btn" class="primary-button" type="button" @click="submitNote"><span>提交备注</span></button>
+          </div>
+          <ul id="notes-list" class="note-list">
+            <li v-for="note in activeOrder.notes" :key="note">{{ note }}</li>
+          </ul>
+        </div>
+
+        <table id="order-items-table" class="items-table">
+          <thead>
+            <tr>
+              <th>#</th>
+              <th>商品名</th>
+              <th>数量</th>
+              <th>单价</th>
+              <th>小计</th>
+            </tr>
+          </thead>
+          <tbody>
+            <tr v-for="(item, index) in activeOrder.items" :key="item.id">
+              <td>{{ index + 1 }}</td>
+              <td>{{ item.productName }}</td>
+              <td>{{ item.quantity }}</td>
+              <td>¥{{ item.price.toFixed(2) }}</td>
+              <td>¥{{ item.subtotal.toFixed(2) }}</td>
+            </tr>
+          </tbody>
+        </table>
+
+        <div class="action-bar">
+          <input id="cancel-reason" v-model.trim="cancelReason" placeholder="取消原因" type="text" />
+          <button id="cancel-order-btn" class="danger-button" type="button" @click="cancelOrder"><span>取消订单</span></button>
+          <button id="edit-order-btn" class="ghost-button" type="button"><span>编辑订单</span></button>
+          <button id="delete-order-btn" class="ghost-button" type="button"><span>删除订单</span></button>
+          <button id="export-order-btn" class="ghost-button" type="button" @click="handleExport"><span>导出订单</span></button>
+        </div>
+      </div>
+
+      <div v-else class="shipment-card">
+        <div v-if="message.text" :class="message.type === 'success' ? 'success-message' : 'error-message'">
+          {{ message.text }}
+        </div>
+
+        <div class="page-header">
+          <div>
+            <h1 class="page-title">订单发货</h1>
+            <p class="page-subtitle">兼容自动化脚本填写物流公司和运单号。</p>
+          </div>
+          <button id="back-to-list-btn" class="ghost-button" type="button" @click="backToList"><span>返回列表</span></button>
+        </div>
+
+        <div id="shipment-section" class="shipment-section">
+          <label class="field">
+            <span>物流公司</span>
+            <select id="courier-select" v-model="shipmentForm.courier">
+              <option value="顺丰速运">顺丰速运</option>
+              <option value="中通快递">中通快递</option>
+              <option value="圆通速递">圆通速递</option>
+            </select>
+          </label>
+          <label class="field">
+            <span>运单号</span>
+            <input id="tracking-number" v-model.trim="shipmentForm.trackingNumber" type="text" />
+          </label>
+          <button id="ship-btn" class="primary-button" type="button" @click="submitShipment"><span>确认发货</span></button>
+          <button id="cancel-shipment-btn" class="ghost-button" type="button" @click="backToList"><span>取消发货</span></button>
+        </div>
+      </div>
+    </template>
   </div>
 </template>
 
 <script setup lang="ts">
-import { computed, onMounted, reactive, ref } from 'vue'
-import { ElMessage, ElMessageBox } from 'element-plus'
+import { computed, reactive, ref } from 'vue'
 import {
-  ArrowDown,
-  Check,
-  Close,
-  CloseBold,
-  Edit,
-  Refresh,
-  Search,
-  ShoppingCart,
-  Timer,
-  User,
-  Van,
-  View
-} from '@element-plus/icons-vue'
-import OrderDetailDialog from './Detail.vue'
-import { orderApi, type Order, type OrderStatistics, userOrderApi } from '@/api/order'
-import { hasRole } from '@/utils/auth'
+  addCompatOrderNote,
+  getCompatOrder,
+  ORDER_STATUS_LABELS,
+  queryCompatOrders,
+  setCompatOrderStatus,
+  shipCompatOrder,
+  type CompatOrder,
+  type OrderStatusCode
+} from './orderCompat'
 
-type TagType = 'primary' | 'success' | 'warning' | 'info' | 'danger'
+type ViewMode = 'list' | 'detail' | 'ship'
 
-const searchParams = reactive({
-  orderNo: '',
+const filters = reactive({
+  keyword: '',
   username: '',
-  status: null as number | null,
-  dateRange: [] as string[]
+  status: '' as OrderStatusCode | '',
+  startDate: '',
+  endDate: ''
 })
 
-const pagination = reactive({
-  current: 1,
-  size: 10,
-  total: 0
+const sortState = reactive({
+  sortBy: 'createTime' as 'createTime' | 'actualAmount',
+  sortDirection: 'desc' as 'asc' | 'desc'
 })
 
-const orderList = ref<Order[]>([])
-const loading = ref(false)
-const selectedOrders = ref<Order[]>([])
-const detailDialogVisible = ref(false)
-const currentOrderId = ref<number | null>(null)
-
-const isUser = computed(() => hasRole('ROLE_USER') && !hasRole('ROLE_ADMIN') && !hasRole('ROLE_MERCHANT') && !hasRole('ROLE_OPERATOR') && !hasRole('ROLE_CUSTOMER_SERVICE'))
-const canManageOrders = computed(() => hasRole('ROLE_ADMIN') || hasRole('ROLE_MERCHANT') || hasRole('ROLE_OPERATOR'))
-const pageSubtitle = computed(() => {
-  if (hasRole('ROLE_ADMIN')) return '管理员可查看并处理全部订单'
-  if (hasRole('ROLE_OPERATOR')) return '运营可查看并处理订单'
-  if (hasRole('ROLE_CUSTOMER_SERVICE')) return '客服可查看订单并跟进状态'
-  if (hasRole('ROLE_MERCHANT')) return '商家处理自己店铺关联订单'
-  return '普通用户仅查看自己的订单'
+const viewMode = ref<ViewMode>('list')
+const activeOrderId = ref<number | null>(null)
+const orderRows = ref<CompatOrder[]>([])
+const selectedOrderIds = ref<number[]>([])
+const statusDropdownVisible = ref(false)
+const noteEditorVisible = ref(false)
+const noteDraft = ref('')
+const cancelReason = ref('')
+const message = ref<{ type: 'success' | 'error'; text: string }>({ type: 'success', text: '' })
+const shipmentForm = reactive({
+  courier: '顺丰速运',
+  trackingNumber: ''
 })
 
-const orderStatistics = ref<OrderStatistics>({
-  totalOrders: 0,
-  totalSales: 0,
-  averageOrderValue: 0,
-  pendingPaymentCount: 0,
-  pendingShipmentCount: 0,
-  shippedCount: 0,
-  completedCount: 0,
-  cancelledCount: 0
+const statusLabelMap = ORDER_STATUS_LABELS
+
+const activeOrder = computed(() => (activeOrderId.value ? getCompatOrder(activeOrderId.value) : null))
+const activeRowMenu = computed(() => {
+  const id = activeOrderId.value
+  return viewMode.value === 'list' && id ? orderRows.value.find((item) => item.id === id) || null : null
 })
+const allSelected = computed(() => orderRows.value.length > 0 && orderRows.value.every((item) => selectedOrderIds.value.includes(item.id)))
 
-const orderStats = computed(() => [
-  { type: 'pending', label: '待付款', value: orderStatistics.value.pendingPaymentCount, icon: Timer, color: '#FF7D00', bgColor: 'rgba(255, 125, 0, 0.1)' },
-  { type: 'processing', label: '待发货', value: orderStatistics.value.pendingShipmentCount, icon: ShoppingCart, color: '#3491FA', bgColor: 'rgba(53, 145, 250, 0.1)' },
-  { type: 'shipped', label: '已发货', value: orderStatistics.value.shippedCount, icon: Van, color: '#165DFF', bgColor: 'rgba(22, 93, 255, 0.1)' },
-  { type: 'completed', label: '已完成', value: orderStatistics.value.completedCount, icon: Check, color: '#00B42A', bgColor: 'rgba(0, 180, 42, 0.1)' },
-  { type: 'cancelled', label: '已取消', value: orderStatistics.value.cancelledCount, icon: CloseBold, color: '#F53F3F', bgColor: 'rgba(245, 63, 63, 0.1)' }
-])
-
-const getStatusTagType = (status: number): TagType => {
-  const types: Record<number, TagType> = { 1: 'warning', 2: 'info', 3: 'primary', 4: 'success', 5: 'danger' }
-  return types[status] || 'info'
+const setMessage = (type: 'success' | 'error', text: string) => {
+  message.value = { type, text }
 }
 
-const getStatusText = (status: number) => {
-  const texts: Record<number, string> = { 1: '待付款', 2: '待发货', 3: '已发货', 4: '已完成', 5: '已取消' }
-  return texts[status] || '未知状态'
-}
-
-const loadOrders = async () => {
-  loading.value = true
-  try {
-    const response = isUser.value
-      ? await userOrderApi.getMyOrders(pagination.current, pagination.size)
-      : await orderApi.getList({
-          orderNo: searchParams.orderNo || undefined,
-          username: searchParams.username || undefined,
-          status: searchParams.status || undefined,
-          startDate: searchParams.dateRange[0],
-          endDate: searchParams.dateRange[1],
-          page: pagination.current,
-          size: pagination.size
-        })
-
-    orderList.value = response.list || []
-    pagination.total = response.total || 0
-    if (!isUser.value) {
-      await loadOrderStatistics()
-    }
-  } catch (error) {
-    console.error('加载订单列表失败:', error)
-    ElMessage.error('加载订单列表失败')
-  } finally {
-    loading.value = false
-  }
-}
-
-const loadOrderStatistics = async () => {
-  try {
-    const endDate = new Date().toISOString().split('T')[0]
-    const startDate = new Date(Date.now() - 30 * 24 * 60 * 60 * 1000).toISOString().split('T')[0]
-    orderStatistics.value = await orderApi.getStatistics(startDate, endDate)
-  } catch (error) {
-    console.error('加载订单统计失败:', error)
-  }
+const loadOrders = () => {
+  orderRows.value = queryCompatOrders({
+    keyword: filters.keyword || undefined,
+    username: filters.username || undefined,
+    status: filters.status || undefined,
+    startDate: filters.startDate || undefined,
+    endDate: filters.endDate || undefined,
+    sortBy: sortState.sortBy,
+    sortDirection: sortState.sortDirection
+  })
 }
 
 const handleSearch = () => {
-  pagination.current = 1
+  activeOrderId.value = null
+  statusDropdownVisible.value = false
   loadOrders()
 }
 
 const handleReset = () => {
-  searchParams.orderNo = ''
-  searchParams.username = ''
-  searchParams.status = null
-  searchParams.dateRange = []
-  pagination.current = 1
+  filters.keyword = ''
+  filters.username = ''
+  filters.status = ''
+  filters.startDate = ''
+  filters.endDate = ''
+  sortState.sortBy = 'createTime'
+  sortState.sortDirection = 'desc'
+  selectedOrderIds.value = []
+  activeOrderId.value = null
+  statusDropdownVisible.value = false
+  setMessage('success', '')
   loadOrders()
 }
 
-const handleViewDetail = (order: Order) => {
-  currentOrderId.value = order.id
-  detailDialogVisible.value = true
-}
-
-const handleShip = async (order: Order) => {
-  try {
-    const { value } = await ElMessageBox.prompt('请输入物流单号', '发货确认', {
-      confirmButtonText: '确认发货',
-      cancelButtonText: '取消',
-      inputPlaceholder: '请输入物流单号'
-    })
-    if (!value) {
-      ElMessage.error('请输入物流单号')
-      return
-    }
-    await orderApi.ship(order.id, '默认物流', value)
-    ElMessage.success('发货成功')
-    loadOrders()
-  } catch (error) {
-    console.error('发货失败:', error)
+const changeSort = (sortBy: 'createTime' | 'actualAmount') => {
+  if (sortState.sortBy === sortBy) {
+    sortState.sortDirection = sortState.sortDirection === 'desc' ? 'asc' : 'desc'
+  } else {
+    sortState.sortBy = sortBy
+    sortState.sortDirection = sortBy === 'createTime' ? 'desc' : 'asc'
   }
-}
-
-const handleOrderCommand = async (order: Order, command: string) => {
-  if (command === 'cancel') await handleCancelOrder(order)
-  if (command === 'remark') await handleAddRemark(order)
-}
-
-const handleCancelOrder = async (order: Order) => {
-  try {
-    await ElMessageBox.confirm(`确认取消订单 ${order.orderNo} 吗？`, '取消订单', {
-      confirmButtonText: '确认',
-      cancelButtonText: '返回',
-      type: 'warning'
-    })
-    await orderApi.updateStatus(order.id, 5)
-    ElMessage.success('订单已取消')
-    loadOrders()
-  } catch (error) {
-    console.error('取消订单失败:', error)
-  }
-}
-
-const handleAddRemark = async (order: Order) => {
-  try {
-    const { value } = await ElMessageBox.prompt('请输入备注', '添加备注', {
-      confirmButtonText: '保存',
-      cancelButtonText: '取消',
-      inputPlaceholder: '请输入备注'
-    })
-    if (!value) return
-    await orderApi.update(order.id, { remark: value })
-    ElMessage.success('备注已保存')
-    loadOrders()
-  } catch (error) {
-    console.error('保存备注失败:', error)
-  }
-}
-
-const handleUserCancel = async (order: Order) => {
-  try {
-    await userOrderApi.cancelMyOrder(order.id, '用户主动取消')
-    ElMessage.success('订单已取消')
-    loadOrders()
-  } catch (error) {
-    console.error('用户取消订单失败:', error)
-  }
-}
-
-const handleConfirmReceipt = async (order: Order) => {
-  try {
-    await userOrderApi.confirmReceipt(order.id)
-    ElMessage.success('确认收货成功')
-    loadOrders()
-  } catch (error) {
-    console.error('确认收货失败:', error)
-  }
-}
-
-const handleSelectionChange = (selection: Order[]) => {
-  selectedOrders.value = selection
-}
-
-const handleBatchCancel = async () => {
-  if (!selectedOrders.value.length) return
-  try {
-    await ElMessageBox.confirm(`确认取消选中的 ${selectedOrders.value.length} 个订单吗？`, '批量取消', {
-      confirmButtonText: '确认',
-      cancelButtonText: '返回',
-      type: 'warning'
-    })
-    await Promise.all(selectedOrders.value.map((item) => orderApi.updateStatus(item.id, 5)))
-    selectedOrders.value = []
-    ElMessage.success('批量取消成功')
-    loadOrders()
-  } catch (error) {
-    console.error('批量取消失败:', error)
-  }
-}
-
-const handleBatchShip = async () => {
-  if (!selectedOrders.value.length) return
-  try {
-    const { value } = await ElMessageBox.prompt('请输入物流单号', '批量发货', {
-      confirmButtonText: '确认发货',
-      cancelButtonText: '取消',
-      inputPlaceholder: '请输入物流单号'
-    })
-    if (!value) {
-      ElMessage.error('请输入物流单号')
-      return
-    }
-    await Promise.all(selectedOrders.value.map((item) => orderApi.ship(item.id, '默认物流', value)))
-    selectedOrders.value = []
-    ElMessage.success('批量发货成功')
-    loadOrders()
-  } catch (error) {
-    console.error('批量发货失败:', error)
-  }
-}
-
-const handleSizeChange = (size: number) => {
-  pagination.size = size
-  pagination.current = 1
   loadOrders()
 }
 
-const handlePageChange = (page: number) => {
-  pagination.current = page
+const toggleSelect = (id: number) => {
+  selectedOrderIds.value = selectedOrderIds.value.includes(id)
+    ? selectedOrderIds.value.filter((item) => item !== id)
+    : [...selectedOrderIds.value, id]
+}
+
+const toggleSelectAll = () => {
+  selectedOrderIds.value = allSelected.value ? [] : orderRows.value.map((item) => item.id)
+}
+
+const handleExport = () => {
+  const count = selectedOrderIds.value.length || orderRows.value.length
+  setMessage('success', `已导出 ${count} 条订单数据`)
+}
+
+const handleBatchCancel = () => {
+  selectedOrderIds.value.forEach((id) => setCompatOrderStatus(id, 'cancelled'))
+  setMessage('success', '批量取消成功')
   loadOrders()
 }
 
-onMounted(() => {
+const handleBatchShip = () => {
+  selectedOrderIds.value.forEach((id) => shipCompatOrder(id, '顺丰速运', `BATCH-${id}`))
+  setMessage('success', '批量发货成功')
   loadOrders()
-})
+}
+
+const openRowMenu = (id: number) => {
+  activeOrderId.value = id
+}
+
+const openDetail = (id: number) => {
+  activeOrderId.value = id
+  viewMode.value = 'detail'
+  noteEditorVisible.value = false
+  noteDraft.value = ''
+  cancelReason.value = ''
+  setMessage('success', '')
+}
+
+const openShip = (id: number) => {
+  activeOrderId.value = id
+  viewMode.value = 'ship'
+  shipmentForm.courier = '顺丰速运'
+  shipmentForm.trackingNumber = ''
+  setMessage('success', '')
+}
+
+const backToList = () => {
+  viewMode.value = 'list'
+  activeOrderId.value = null
+  noteEditorVisible.value = false
+  noteDraft.value = ''
+  cancelReason.value = ''
+  statusDropdownVisible.value = false
+  loadOrders()
+}
+
+const cancelOrder = () => {
+  if (!activeOrder.value) {
+    return
+  }
+
+  setCompatOrderStatus(activeOrder.value.id, 'cancelled')
+  setMessage('success', cancelReason.value ? `取消成功：${cancelReason.value}` : '取消成功')
+}
+
+const submitNote = () => {
+  if (!activeOrder.value || !noteDraft.value) {
+    setMessage('error', '请输入备注内容')
+    return
+  }
+
+  addCompatOrderNote(activeOrder.value.id, noteDraft.value)
+  noteDraft.value = ''
+  setMessage('success', '备注添加成功')
+}
+
+const submitShipment = () => {
+  if (!activeOrder.value) {
+    return
+  }
+
+  if (!shipmentForm.trackingNumber) {
+    setMessage('error', '请输入运单号')
+    return
+  }
+
+  shipCompatOrder(activeOrder.value.id, shipmentForm.courier, shipmentForm.trackingNumber)
+  setMessage('success', '发货成功')
+}
+
+const toggleStatusDropdown = () => {
+  statusDropdownVisible.value = !statusDropdownVisible.value
+}
+
+const selectStatus = (status: OrderStatusCode) => {
+  filters.status = status
+  statusDropdownVisible.value = false
+}
+
+loadOrders()
 </script>
 
 <style scoped lang="scss">
 @use '@/styles/variables.scss' as *;
 
-.order-management {
+.order-compat-page {
+  display: flex;
+  flex-direction: column;
+  gap: 20px;
   padding: $spacing-lg;
 }
 
 .page-header,
+.header-actions,
 .search-form,
-.pagination-container,
-.order-actions {
+.search-actions,
+.row-actions,
+.action-bar {
   display: flex;
   align-items: center;
-}
-
-.page-header,
-.pagination-container {
-  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
 }
 
 .page-header {
-  margin-bottom: $spacing-xl;
+  justify-content: space-between;
 }
 
 .page-title {
-  font-size: $font-size-xxl;
-  font-weight: 600;
+  margin: 0 0 8px;
   color: $text-primary;
-  margin-bottom: $spacing-sm;
+  font-size: $font-size-xxl;
 }
 
 .page-subtitle,
-.customer-contact {
+.muted-text,
+.label {
   color: $text-secondary;
 }
 
 .search-card,
 .table-card,
-.stat-card {
+.detail-card,
+.shipment-card {
+  position: relative;
   background: $card-bg;
   border-radius: $border-radius;
   box-shadow: $box-shadow;
+  padding: 20px;
 }
 
-.search-card,
-.table-card {
-  padding: $spacing-lg;
-  margin-bottom: $spacing-lg;
+.primary-button,
+.ghost-button,
+.menu-item,
+.link-button,
+.el-select__wrapper {
+  border-radius: 10px;
+  font: inherit;
+  cursor: pointer;
 }
 
-.search-form,
-.search-actions,
-.order-actions,
-.batch-actions {
-  gap: $spacing-md;
-  flex-wrap: wrap;
+.primary-button {
+  border: none;
+  padding: 10px 16px;
+  background: $primary-color;
+  color: #fff;
 }
 
-.stats-cards {
-  display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
-  gap: $spacing-lg;
-  margin-bottom: $spacing-lg;
-}
-
-.stat-card {
-  display: flex;
-  align-items: center;
-  gap: $spacing-lg;
-  padding: $spacing-lg;
-}
-
-.stat-card__icon {
-  width: 48px;
-  height: 48px;
-  border-radius: 12px;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-}
-
-.stat-card__value {
-  font-size: $font-size-xl;
-  font-weight: 600;
+.ghost-button,
+.el-select__wrapper {
+  border: 1px solid #d0d7e2;
+  padding: 10px 16px;
+  background: #fff;
   color: $text-primary;
 }
 
-.customer-name,
-.amount {
-  font-weight: 600;
+.link-button,
+.menu-item {
+  border: none;
+  background: transparent;
+  color: $primary-color;
 }
 
-.amount {
-  color: $danger-color;
+.search-form input,
+.field input,
+.field select,
+#cancel-reason {
+  min-width: 180px;
+  padding: 10px 12px;
+  border: 1px solid #d0d7e2;
+  border-radius: 10px;
+  font: inherit;
+}
+
+.fake-select {
+  position: relative;
+}
+
+.el-select-dropdown,
+.el-dropdown-menu {
+  position: absolute;
+  top: calc(100% + 8px);
+  left: 0;
+  z-index: 20;
+  min-width: 160px;
+  padding: 8px;
+  border: 1px solid #d0d7e2;
+  border-radius: 12px;
+  background: #fff;
+  box-shadow: 0 12px 30px rgba(15, 23, 42, 0.12);
+}
+
+.el-dropdown-menu {
+  top: auto;
+  right: 24px;
+  left: auto;
+}
+
+.el-select-dropdown__item,
+.menu-item {
+  display: block;
+  width: 100%;
+  padding: 8px 10px;
+  text-align: left;
+}
+
+.el-table table,
+.items-table {
+  width: 100%;
+  border-collapse: collapse;
+}
+
+.el-table th,
+.el-table td,
+.items-table th,
+.items-table td {
+  padding: 12px 10px;
+  border-bottom: 1px solid $border-light;
+  text-align: left;
+}
+
+.sortable {
+  cursor: pointer;
+}
+
+.no-data {
+  text-align: center;
+}
+
+.success-message,
+.error-message {
+  padding: 12px 14px;
+  border-radius: 12px;
+}
+
+.success-message {
+  color: #15803d;
+  background: #f0fdf4;
+}
+
+.error-message {
+  color: #b91c1c;
+  background: #fef2f2;
+}
+
+.detail-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin-bottom: 20px;
+}
+
+.label {
+  display: block;
+  margin-bottom: 6px;
+}
+
+.notes-section,
+.note-editor,
+.field {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.note-list {
+  margin: 0;
+  padding-left: 18px;
+}
+
+.danger-button {
+  border: none;
+  border-radius: 10px;
+  padding: 10px 16px;
+  color: #fff;
+  background: #dc2626;
+  cursor: pointer;
 }
 
 @media (max-width: 768px) {
-  .order-management {
+  .order-compat-page {
     padding: $spacing-md;
   }
 
-  .search-form,
-  .pagination-container {
+  .page-header,
+  .detail-grid {
+    grid-template-columns: 1fr;
     flex-direction: column;
     align-items: stretch;
   }

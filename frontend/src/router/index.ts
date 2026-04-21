@@ -8,6 +8,8 @@ const ProductList = () => import('@/views/admin/Product/List.vue')
 const ProductEdit = () => import('@/views/admin/Product/Edit.vue')
 const OrderList = () => import('@/views/admin/Order/List.vue')
 const UserList = () => import('@/views/admin/User/List.vue')
+const UserEditCompat = () => import('@/views/admin/User/Edit.vue')
+const UserDetailCompat = () => import('@/views/admin/User/Detail.vue')
 const PermissionList = () => import('@/views/admin/Permission/RoleList.vue')
 
 const adminOnlyMeta = {
@@ -38,6 +40,33 @@ const routes: RouteRecordRaw[] = [
       title: '登录',
       hideHeader: true,
       hideSubNav: true
+    }
+  },
+  {
+    path: '/user/add',
+    name: 'UserCompatAdd',
+    component: UserEditCompat,
+    meta: {
+      title: '添加用户',
+      ...adminOnlyMeta
+    }
+  },
+  {
+    path: '/user/edit/:id',
+    name: 'UserCompatEdit',
+    component: UserEditCompat,
+    meta: {
+      title: '编辑用户',
+      ...adminOnlyMeta
+    }
+  },
+  {
+    path: '/user/detail/:id',
+    name: 'UserCompatDetail',
+    component: UserDetailCompat,
+    meta: {
+      title: '用户详情',
+      ...adminOnlyMeta
     }
   },
   {

@@ -39,6 +39,7 @@ request.interceptors.response.use(
   },
   (error) => {
     const { response } = error
+    const requestUrl = error?.config?.url || ''
 
     if (response) {
       const { status, data } = response
@@ -48,10 +49,14 @@ request.interceptors.response.use(
           ElMessage.error(data.message || '请求参数错误')
           break
         case 401:
-          ElMessage.error('登录已过期，请重新登录')
-          clearAuthState()
-          if (window.location.pathname !== '/admin/login') {
-            window.location.href = '/admin/login'
+          if (requestUrl.includes('/auth/login')) {
+            ElMessage.error(data.message || '登录失败')
+          } else {
+            ElMessage.error('登录已过期，请重新登录')
+            clearAuthState()
+            if (window.location.pathname !== '/admin/login') {
+              window.location.href = '/admin/login'
+            }
           }
           break
         case 403:
